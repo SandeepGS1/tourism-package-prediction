@@ -211,7 +211,7 @@ from huggingface_hub import hf_hub_download
 
 # Download the model
 model_path = hf_hub_download(
-    repo_id="nsriram78/tourism-package-prediction",
+    repo_id="SandeepGS/tourism_package-prediction",
     filename="tourism_conversion_predict_model.joblib",
     repo_type="model"
 )
@@ -288,7 +288,7 @@ For questions or issues, please open an issue in the model repository.
     print("Model card created: README.md")
 
     # Upload to Hugging Face
-    repo_id = "nsriram78/tourism-package-prediction"
+    repo_id = "SandeepGS/tourism_package-prediction"
     repo_type = "model"
 
     # Step 1: Check if the space exists
