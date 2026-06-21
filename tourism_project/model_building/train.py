@@ -21,10 +21,10 @@ mlflow.set_experiment("tourism-package-prediction-experiment")
 api = HfApi(token=os.getenv("HF_TOKEN"))
 
 # Load the dataset from Hugging Face dataset repo
-Xtrain_path = "hf://datasets/SandeepGS/tourism-package-prediction/Xtrain.csv"
-Xtest_path = "hf://datasets/SandeepGS/tourism-package-prediction/Xtest.csv"
-ytrain_path = "hf://datasets/SandeepGS/tourism-package-prediction/ytrain.csv"
-ytest_path = "hf://datasets/SandeepGS/tourism-package-prediction/ytest.csv"
+Xtrain_path = "hf://datasets/SandeepGS/tourism_package-prediction/Xtrain.csv"
+Xtest_path = "hf://datasets/SandeepGS/tourism_package-prediction/Xtest.csv"
+ytrain_path = "hf://datasets/SandeepGS/tourism_package-prediction/ytrain.csv"
+ytest_path = "hf://datasets/SandeepGS/tourism_package-prediction/ytest.csv"
 
 Xtrain = pd.read_csv(Xtrain_path)
 Xtest = pd.read_csv(Xtest_path)
