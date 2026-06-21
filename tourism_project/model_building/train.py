@@ -57,21 +57,24 @@ else:
 # CI-safe MLflow setup
 # ============================================================
 MLRUNS_DIR = Path("mlruns").resolve()
+MLARTIFACTS_DIR = Path("mlartifacts").resolve()
+
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", f"file://{MLRUNS_DIR}")
 EXPERIMENT_NAME = os.getenv(
     "MLFLOW_EXPERIMENT_NAME",
     "tourism-package-prediction-experiment-ci"
 )
 
+MLRUNS_DIR.mkdir(parents=True, exist_ok=True)
+MLARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
 existing_exp = mlflow.get_experiment_by_name(EXPERIMENT_NAME)
 if existing_exp is None:
-    artifact_dir = (MLRUNS_DIR / "artifacts").resolve()
-    artifact_dir.mkdir(parents=True, exist_ok=True)
     mlflow.create_experiment(
         EXPERIMENT_NAME,
-        artifact_location=f"file://{artifact_dir}"
+        artifact_location=f"file://{MLARTIFACTS_DIR}"
     )
 
 mlflow.set_experiment(EXPERIMENT_NAME)
