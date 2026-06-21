@@ -1,318 +1,333 @@
-# import necessary libraries
-import pandas as pd
-import os
-import xgboost as xgb
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OrdinalEncoder
-from sklearn.pipeline import make_pipeline
-from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import classification_report
-from huggingface_hub import HfApi, create_repo
-from huggingface_hub.utils import RepositoryNotFoundError
-import joblib
+# tourism_project/model_building/train.py
 
+import os
+import json
+import warnings
+from pathlib import Path
+
+import pandas as pd
+import joblib
+import xgboost as xgb
 import mlflow
 
-# Set up MLFlow tracking
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OrdinalEncoder
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.metrics import (
+    classification_report,
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+)
+from sklearn.impute import SimpleImputer
+
+from huggingface_hub import HfApi, create_repo
+from huggingface_hub.utils import RepositoryNotFoundError
+
+warnings.filterwarnings("ignore")
+
+# ============================================================
+# Configuration
+# ============================================================
+DATASET_REPO_ID = "SandeepGS/tourism_package-prediction"
+MODEL_REPO_ID = "SandeepGS/tourism_package-prediction"
+MODEL_REPO_TYPE = "model"
+
+MODEL_FILE_NAME = "tourism_conversion_predict_model.joblib"
+MODEL_CARD_FILE = "README.md"
+
+CLASSIFICATION_THRESHOLD = 0.45
+RANDOM_STATE = 42
+
+# Runtime optimization settings
+FAST_CI = os.getenv("FAST_CI", "true").lower() == "true"
+
+if FAST_CI:
+    N_ITER = 8
+    CV_FOLDS = 3
+    N_ESTIMATORS_OPTIONS = [80, 120]
+else:
+    N_ITER = 20
+    CV_FOLDS = 5
+    N_ESTIMATORS_OPTIONS = [100, 150, 200]
+
+# ============================================================
+# CI-safe MLflow setup
+# ============================================================
+MLRUNS_DIR = Path("mlruns").resolve()
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", f"file://{MLRUNS_DIR}")
+EXPERIMENT_NAME = os.getenv(
+    "MLFLOW_EXPERIMENT_NAME",
+    "tourism-package-prediction-experiment-ci"
+)
+
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
-# Initialize Hugging Face API
-api = HfApi(token=os.getenv("HF_TOKEN"))
+existing_exp = mlflow.get_experiment_by_name(EXPERIMENT_NAME)
+if existing_exp is None:
+    artifact_dir = (MLRUNS_DIR / "artifacts").resolve()
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    mlflow.create_experiment(
+        EXPERIMENT_NAME,
+        artifact_location=f"file://{artifact_dir}"
+    )
 
-# Load the dataset from Hugging Face dataset repo
-Xtrain_path = "hf://datasets/SandeepGS/tourism_package-prediction/Xtrain.csv"
-Xtest_path = "hf://datasets/SandeepGS/tourism_package-prediction/Xtest.csv"
-ytrain_path = "hf://datasets/SandeepGS/tourism_package-prediction/ytrain.csv"
-ytest_path = "hf://datasets/SandeepGS/tourism_package-prediction/ytest.csv"
+mlflow.set_experiment(EXPERIMENT_NAME)
+
+# ============================================================
+# Hugging Face authentication
+# ============================================================
+HF_TOKEN = os.getenv("HF_TOKEN")
+if not HF_TOKEN:
+    raise EnvironmentError("HF_TOKEN environment variable is not set.")
+
+api = HfApi(token=HF_TOKEN)
+
+# ============================================================
+# Load prepared datasets from Hugging Face dataset repo
+# ============================================================
+Xtrain_path = f"hf://datasets/{DATASET_REPO_ID}/Xtrain.csv"
+Xtest_path = f"hf://datasets/{DATASET_REPO_ID}/Xtest.csv"
+ytrain_path = f"hf://datasets/{DATASET_REPO_ID}/ytrain.csv"
+ytest_path = f"hf://datasets/{DATASET_REPO_ID}/ytest.csv"
 
 Xtrain = pd.read_csv(Xtrain_path)
 Xtest = pd.read_csv(Xtest_path)
-ytrain = pd.read_csv(ytrain_path)
-ytest = pd.read_csv(ytest_path)
+
+# squeeze single-column DataFrame -> Series
+ytrain = pd.read_csv(ytrain_path).squeeze("columns")
+ytest = pd.read_csv(ytest_path).squeeze("columns")
 
 print(f"Training set loaded: X={Xtrain.shape}, y={ytrain.shape}")
 print(f"Test set loaded: X={Xtest.shape}, y={ytest.shape}")
 
-# Define feature groups
-nominal_features = ['TypeofContact', 'Occupation', 'Gender', 'ProductPitched', 'MaritalStatus']
-ordinal_features = ['Designation']
-numeric_features = [
-    'Age', 'CityTier', 'DurationOfPitch', 'NumberOfPersonVisiting',
-    'NumberOfFollowups', 'PreferredPropertyStar', 'NumberOfTrips',
-    'Passport', 'PitchSatisfactionScore', 'OwnCar',
-    'NumberOfChildrenVisiting', 'MonthlyIncome'
+# ============================================================
+# Feature groups
+# ============================================================
+nominal_features = [
+    "TypeofContact",
+    "Occupation",
+    "Gender",
+    "ProductPitched",
+    "MaritalStatus",
 ]
 
-# Create preprocessing pipeline
-preprocessor = ColumnTransformer(
-    transformers=[
-        ('num', 'passthrough', numeric_features),  # Keep numeric as-is
-        ('nom', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), nominal_features),
-        ('ord', OrdinalEncoder(
-            categories=[['Executive', 'Manager', 'Senior Manager', 'AVP', 'VP']],
-            handle_unknown='use_encoded_value', unknown_value=-1
-        ), ordinal_features)
+ordinal_features = ["Designation"]
+
+numeric_features = [
+    "Age",
+    "CityTier",
+    "DurationOfPitch",
+    "NumberOfPersonVisiting",
+    "NumberOfFollowups",
+    "PreferredPropertyStar",
+    "NumberOfTrips",
+    "Passport",
+    "PitchSatisfactionScore",
+    "OwnCar",
+    "NumberOfChildrenVisiting",
+    "MonthlyIncome",
+]
+
+# ============================================================
+# Preprocessing
+# ============================================================
+numeric_transformer = Pipeline(
+    steps=[
+        ("imputer", SimpleImputer(strategy="median"))
     ]
 )
 
-# Set the clas weight to handle class imbalance
-class_weight = ytrain.value_counts()[0] / ytrain.value_counts()[1]
-
-# Define base XGBoost model
-xgb_model = xgb.XGBClassifier(
-    eval_metric='logloss', scale_pos_weight=class_weight, random_state=42
+nominal_transformer = Pipeline(
+    steps=[
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        ("encoder", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)),
+    ]
 )
 
-# Define hyperparameter grid
-param_grid = {
-    'xgbclassifier__n_estimators': [150, 175, 200, 225, 250],  # number of tree to build
-    'xgbclassifier__max_depth': [3, 4, 5],  # maximum depth of each tree
-    'xgbclassifier__colsample_bytree': [0.4, 0.5, 0.6],
-    # percentage of attributes to be considered (randomly) for each tree
-    'xgbclassifier__colsample_bylevel': [0.4, 0.5, 0.6],
-    # percentage of attributes to be considered (randomly) for each level of a tree
-    'xgbclassifier__learning_rate': [0.05, 0.1, 0.15],  # learning rate
-    'xgbclassifier__reg_lambda': [0.5, 0.6, 0.7],  # L2 regularization factor
+ordinal_transformer = Pipeline(
+    steps=[
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        (
+            "encoder",
+            OrdinalEncoder(
+                categories=[["Executive", "Manager", "Senior Manager", "AVP", "VP"]],
+                handle_unknown="use_encoded_value",
+                unknown_value=-1,
+            ),
+        ),
+    ]
+)
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("num", numeric_transformer, numeric_features),
+        ("nom", nominal_transformer, nominal_features),
+        ("ord", ordinal_transformer, ordinal_features),
+    ]
+)
+
+# ============================================================
+# Class imbalance handling
+# ============================================================
+class_counts = ytrain.value_counts()
+if 0 not in class_counts.index or 1 not in class_counts.index:
+    raise ValueError("Target variable must contain both classes 0 and 1.")
+
+class_weight = class_counts[0] / class_counts[1]
+
+# ============================================================
+# Model
+# ============================================================
+xgb_model = xgb.XGBClassifier(
+    eval_metric="logloss",
+    scale_pos_weight=class_weight,
+    random_state=RANDOM_STATE,
+    n_jobs=-1,
+    tree_method="hist",
+)
+
+model_pipeline = Pipeline(
+    steps=[
+        ("preprocessor", preprocessor),
+        ("xgbclassifier", xgb_model),
+    ]
+)
+
+# ============================================================
+# Search space
+# ============================================================
+param_distributions = {
+    "xgbclassifier__n_estimators": N_ESTIMATORS_OPTIONS,
+    "xgbclassifier__max_depth": [3, 4],
+    "xgbclassifier__learning_rate": [0.05, 0.1],
+    "xgbclassifier__subsample": [0.8, 1.0],
+    "xgbclassifier__colsample_bytree": [0.8, 1.0],
 }
 
-# Model pipeline
-model_pipeline = make_pipeline(preprocessor, xgb_model)
+search = RandomizedSearchCV(
+    estimator=model_pipeline,
+    param_distributions=param_distributions,
+    n_iter=N_ITER,
+    cv=CV_FOLDS,
+    scoring="f1",
+    n_jobs=-1,
+    verbose=1,
+    random_state=RANDOM_STATE,
+    refit=True,
+)
 
-# Start MLFlow run
-with mlflow.start_run():
-    # Hyperparameter tuning
-    grid_search = GridSearchCV(model_pipeline, param_grid, cv=5, scoring='f1', n_jobs=-1)
-    grid_search.fit(Xtrain, ytrain)
+# ============================================================
+# Train + log
+# ============================================================
+with mlflow.start_run(run_name="xgboost_fast_ci_search"):
+    mlflow.log_param("fast_ci", FAST_CI)
+    mlflow.log_param("n_iter", N_ITER)
+    mlflow.log_param("cv_folds", CV_FOLDS)
+    mlflow.log_param("tracking_uri", MLFLOW_TRACKING_URI)
+    mlflow.log_param("dataset_repo_id", DATASET_REPO_ID)
+    mlflow.log_param("model_repo_id", MODEL_REPO_ID)
 
-    # Log all parameter combinations and their mean test scores
-    results = grid_search.cv_results_
-    for i in range(len(results['params'])):
-        param_set = results['params'][i]
-        mean_score = results['mean_test_score'][i]
-        std_score = results['std_test_score'][i]
+    search.fit(Xtrain, ytrain)
 
-        # Log each combination as a separate MLflow run
-        with mlflow.start_run(nested=True):
-            mlflow.log_params(param_set)
-            mlflow.log_metric("mean_test_score", mean_score)
-            mlflow.log_metric("std_test_score", std_score)
+    best_model = search.best_estimator_
+    mlflow.log_params(search.best_params_)
+    mlflow.log_metric("best_cv_f1", float(search.best_score_))
 
-    # Log best parameters separately in main run
-    mlflow.log_params(grid_search.best_params_)
+    cv_results = pd.DataFrame(search.cv_results_)
+    cv_results.to_csv("cv_results.csv", index=False)
+    mlflow.log_artifact("cv_results.csv")
 
-    # Store and evaluate the best model
-    best_model = grid_search.best_estimator_
-
-    # define the classification threshold
-    classification_threshold = 0.45
-
-    # predict the training data using the best model
     y_pred_train_proba = best_model.predict_proba(Xtrain)[:, 1]
-    y_pred_train = (y_pred_train_proba >= classification_threshold).astype(int)
-
-    # predict the test data using the best model
     y_pred_test_proba = best_model.predict_proba(Xtest)[:, 1]
-    y_pred_test = (y_pred_test_proba >= classification_threshold).astype(int)
+
+    y_pred_train = (y_pred_train_proba >= CLASSIFICATION_THRESHOLD).astype(int)
+    y_pred_test = (y_pred_test_proba >= CLASSIFICATION_THRESHOLD).astype(int)
+
+    metrics = {
+        "train_accuracy": accuracy_score(ytrain, y_pred_train),
+        "train_precision": precision_score(ytrain, y_pred_train, zero_division=0),
+        "train_recall": recall_score(ytrain, y_pred_train, zero_division=0),
+        "train_f1_score": f1_score(ytrain, y_pred_train, zero_division=0),
+        "test_accuracy": accuracy_score(ytest, y_pred_test),
+        "test_precision": precision_score(ytest, y_pred_test, zero_division=0),
+        "test_recall": recall_score(ytest, y_pred_test, zero_division=0),
+        "test_f1_score": f1_score(ytest, y_pred_test, zero_division=0),
+    }
+    mlflow.log_metrics(metrics)
 
     train_report = classification_report(ytrain, y_pred_train, output_dict=True)
     test_report = classification_report(ytest, y_pred_test, output_dict=True)
 
-    # Log the metrics for the best model
-    mlflow.log_metrics({
-        "train_accuracy": train_report['accuracy'],
-        "train_precision": train_report['1']['precision'],
-        "train_recall": train_report['1']['recall'],
-        "train_f1-score": train_report['1']['f1-score'],
-        "test_accuracy": test_report['accuracy'],
-        "test_precision": test_report['1']['precision'],
-        "test_recall": test_report['1']['recall'],
-        "test_f1-score": test_report['1']['f1-score']
-    })
+    with open("train_classification_report.json", "w") as f:
+        json.dump(train_report, f, indent=2)
 
-    # Save the model locally
-    model_path = "tourism_conversion_predict_model.joblib"
-    joblib.dump(best_model, model_path)
+    with open("test_classification_report.json", "w") as f:
+        json.dump(test_report, f, indent=2)
 
-    # Log the model artifact
-    mlflow.log_artifact(model_path, artifact_path="model")
-    print(f"Model saved as artifact at: {model_path}")
+    mlflow.log_artifact("train_classification_report.json")
+    mlflow.log_artifact("test_classification_report.json")
 
-    # Create model card
-    model_card_content = f"""---
+    joblib.dump(best_model, MODEL_FILE_NAME)
+    mlflow.log_artifact(MODEL_FILE_NAME, artifact_path="model")
+
+# ============================================================
+# Ensure HF model repo exists
+# ============================================================
+try:
+    api.repo_info(repo_id=MODEL_REPO_ID, repo_type=MODEL_REPO_TYPE)
+    print(f"Model repo '{MODEL_REPO_ID}' already exists.")
+except RepositoryNotFoundError:
+    create_repo(
+        repo_id=MODEL_REPO_ID,
+        repo_type=MODEL_REPO_TYPE,
+        private=False,
+        token=HF_TOKEN,
+    )
+    print(f"Model repo '{MODEL_REPO_ID}' created.")
+
+# ============================================================
+# Upload model artifact
+# ============================================================
+api.upload_file(
+    path_or_fileobj=MODEL_FILE_NAME,
+    path_in_repo=MODEL_FILE_NAME,
+    repo_id=MODEL_REPO_ID,
+    repo_type=MODEL_REPO_TYPE,
+)
+
+# ============================================================
+# Create and upload model card
+# ============================================================
+with open(MODEL_CARD_FILE, "w", encoding="utf-8") as f:
+    f.write(f"""---
 tags:
 - tourism
 - xgboost
 - classification
-- customer-prediction
+- ci-fast
 library_name: scikit-learn
 pipeline_tag: tabular-classification
 ---
 
 # Tourism Package Prediction Model
 
-## Model Description
+Fast-CI optimized training run.
 
-This model predicts whether a customer will purchase a Wellness Tourism Package from "Visit with Us" travel company. It uses XGBoost classifier with a custom preprocessing pipeline to handle both numeric and categorical features.
+## Best Params
+{json.dumps(search.best_params_, indent=2)}
 
-## Intended Use
+## Metrics
+{json.dumps(metrics, indent=2)}
+""")
 
-**Primary Use:** Identify potential customers for the Wellness Tourism Package to optimize marketing outreach and improve conversion rates.
-
-**Users:** Sales and marketing teams at travel companies.
-
-**Out-of-scope:** This model should not be used for discriminatory purposes or decisions that could significantly impact individuals' lives beyond marketing preferences.
-
-## Training Data
-
-- **Dataset:** Tourism package purchase history
-- **Features:** 18 features including customer demographics, travel preferences, and sales interaction data
-  - 12 numeric features (Age, CityTier, MonthlyIncome, etc.)
-  - 6 categorical features (Gender, Occupation, Designation, etc.)
-- **Target:** Binary classification (ProdTaken: 0 = No purchase, 1 = Purchase)
-- **Training Set:** {Xtrain.shape[0]} samples
-- **Test Set:** {Xtest.shape[0]} samples
-- **Class Imbalance:** Handled using `scale_pos_weight` parameter
-
-## Model Architecture
-
-**Algorithm:** XGBoost Classifier with sklearn preprocessing pipeline
-
-**Preprocessing:**
-- Numeric features: Passthrough (no transformation)
-- Nominal categorical features: OrdinalEncoder
-- Ordinal feature (Designation): OrdinalEncoder with hierarchy (Executive → Manager → Senior Manager → AVP → VP)
-
-**Best Hyperparameters:**
-{chr(10).join([f"- {k.replace('xgbclassifier__', '')}: {v}" for k, v in grid_search.best_params_.items()])}
-
-**Classification Threshold:** 0.45 (optimized for F1-score)
-
-## Performance Metrics
-
-### Training Set
-- **Accuracy:** {train_report['accuracy']:.4f}
-- **Precision:** {train_report['1']['precision']:.4f}
-- **Recall:** {train_report['1']['recall']:.4f}
-- **F1-Score:** {train_report['1']['f1-score']:.4f}
-
-### Test Set
-- **Accuracy:** {test_report['accuracy']:.4f}
-- **Precision:** {test_report['1']['precision']:.4f}
-- **Recall:** {test_report['1']['recall']:.4f}
-- **F1-Score:** {test_report['1']['f1-score']:.4f}
-
-## How to Use
-
-```python
-import joblib
-import pandas as pd
-from huggingface_hub import hf_hub_download
-
-# Download the model
-model_path = hf_hub_download(
-    repo_id="SandeepGS/tourism_package-prediction",
-    filename="tourism_conversion_predict_model.joblib",
-    repo_type="model"
+api.upload_file(
+    path_or_fileobj=MODEL_CARD_FILE,
+    path_in_repo=MODEL_CARD_FILE,
+    repo_id=MODEL_REPO_ID,
+    repo_type=MODEL_REPO_TYPE,
 )
 
-# Load the model
-model = joblib.load(model_path)
-
-# Prepare input data (must match training feature order)
-input_data = pd.DataFrame([{{
-    'Age': 35,
-    'CityTier': 1,
-    'DurationOfPitch': 15,
-    'NumberOfPersonVisiting': 3,
-    'NumberOfFollowups': 3,
-    'PreferredPropertyStar': 4.0,
-    'NumberOfTrips': 3,
-    'Passport': 1,
-    'PitchSatisfactionScore': 3,
-    'OwnCar': 1,
-    'NumberOfChildrenVisiting': 1,
-    'MonthlyIncome': 22000,
-    'TypeofContact': 'Self Enquiry',
-    'Occupation': 'Salaried',
-    'Gender': 'Male',
-    'ProductPitched': 'Basic',
-    'MaritalStatus': 'Married',
-    'Designation': 'Manager'
-}}])
-
-# Get prediction probability
-prediction_proba = model.predict_proba(input_data)[0, 1]
-
-# Apply custom threshold
-prediction = (prediction_proba >= 0.45).astype(int)
-
-print(f"Purchase Probability: {{prediction_proba:.2%}}")
-print(f"Prediction: {{'Will Purchase' if prediction == 1 else 'Will Not Purchase'}}")
-```
-
-## Training Procedure
-
-1. **Data Preparation:** 80/20 train-test split with stratification
-2. **Hyperparameter Tuning:** GridSearchCV with 5-fold cross-validation
-3. **Optimization Metric:** F1-Score (to balance precision and recall)
-4. **Experiment Tracking:** MLflow for logging parameters and metrics
-
-## Limitations and Considerations
-
-- The model is trained on historical data and may not generalize to significantly different customer populations
-- Performance depends on data quality and feature completeness
-- Class imbalance handled but may still affect predictions on minority class
-- Custom threshold of 0.45 optimized for current dataset; may need adjustment for different use cases
-- Model assumes input features are in the exact order and format as training data
-
-## Ethical Considerations
-
-- Ensure model is used responsibly for marketing purposes only
-- Regularly monitor for bias in predictions across different demographic groups
-- Respect customer privacy and comply with data protection regulations
-- Provide opt-out mechanisms for customers who don't wish to be contacted
-
-## Model Card Authors
-
-Sriram Narasimhan
-
-## Model Card Contact
-
-For questions or issues, please open an issue in the model repository.
-"""
-
-    # Save model card
-    with open("README.md", "w") as f:
-        f.write(model_card_content)
-    print("Model card created: README.md")
-
-    # Upload to Hugging Face
-    repo_id = "SandeepGS/tourism_package-prediction"
-    repo_type = "model"
-
-    # Step 1: Check if the space exists
-    try:
-        api.repo_info(repo_id=repo_id, repo_type=repo_type)
-        print(f"Space '{repo_id}' already exists. Using it.")
-    except RepositoryNotFoundError:
-        print(f"Space '{repo_id}' not found. Creating new space...")
-        create_repo(repo_id=repo_id, repo_type=repo_type, private=False)
-        print(f"Space '{repo_id}' created.")
-
-    # Upload model file
-    api.upload_file(
-        path_or_fileobj="tourism_conversion_predict_model.joblib",
-        path_in_repo="tourism_conversion_predict_model.joblib",
-        repo_id=repo_id,
-        repo_type=repo_type,
-    )
-    print("Model file uploaded to Hugging Face")
-
-    # Upload model card
-    api.upload_file(
-        path_or_fileobj="README.md",
-        path_in_repo="README.md",
-        repo_id=repo_id,
-        repo_type=repo_type,
-    )
+print("Fast training run completed successfully.")
