@@ -21,7 +21,7 @@ except RepositoryNotFoundError:
 
 # Step 2: Upload the data folder to the repo
 api.upload_folder(
-    folder_path="data",
+    folder_path="tourism_project/data",
     repo_id=repo_id,
     repo_type=repo_type,
 )
