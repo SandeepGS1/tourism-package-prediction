@@ -14,7 +14,7 @@ import joblib
 import mlflow
 
 # Set up MLFlow tracking
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns") mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")\nmlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 mlflow.set_experiment("tourism-package-prediction-experiment")
 
 # Initialize Hugging Face API
