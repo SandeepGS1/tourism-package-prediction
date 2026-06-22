@@ -46,23 +46,28 @@ jobs:
 
       - run: pip install huggingface_hub
 
-      - run: mkdir deploy_space
-      - run: cp tourism_project/deployment/app.py deploy_space/
-      - run: cp tourism_project/deployment/requirements.txt deploy_space/
-      - run: cp tourism_project/deployment/Dockerfile deploy_space/
+      - name: Prepare files
+        run: |
+          mkdir deploy_space
+          cp tourism_project/deployment/app.py deploy_space/
+          cp tourism_project/deployment/requirements.txt deploy_space/
+          cp tourism_project/deployment/Dockerfile deploy_space/
 
-      - run: echo "---" > deploy_space/README.md
-      - run: echo "title: Tourism Package Prediction" >> deploy_space/README.md
-      - run: echo "emoji: 🌍" >> deploy_space/README.md
-      - run: echo "colorFrom: blue" >> deploy_space/README.md
-      - run: echo "colorTo: green" >> deploy_space/README.md
-      - run: echo "sdk: docker" >> deploy_space/README.md
-      - run: echo "sdk_version: \"0.0.1\"" >> deploy_space/README.md
-      - run: echo "app_file: app.py" >> deploy_space/README.md
-      - run: echo "pinned: false" >> deploy_space/README.md
-      - run: echo "---" >> deploy_space/README.md
+      - name: Create README
+        run: |
+          echo "---" > deploy_space/README.md
+          echo "title: Tourism Package Prediction" >> deploy_space/README.md
+          echo "emoji: 🌍" >> deploy_space/README.md
+          echo "colorFrom: blue" >> deploy_space/README.md
+          echo "colorTo: green" >> deploy_space/README.md
+          echo "sdk: docker" >> deploy_space/README.md
+          echo "sdk_version: \"0.0.1\"" >> deploy_space/README.md
+          echo "app_file: app.py" >> deploy_space/README.md
+          echo "pinned: false" >> deploy_space/README.md
+          echo "---" >> deploy_space/README.md
 
-      - env:
+      - name: Deploy to HF
+        env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           python -c "
@@ -78,7 +83,6 @@ try:
 except RepositoryNotFoundError:
     create_repo(repo_id=repo_id, repo_type='space', space_sdk='docker')
 
-api.upload_folder(folder_path='deploy_space', repo_id=repo_id, repo_type='space')
-
+api.upload_folder('deploy_space', repo_id=repo_id, repo_type='space')
 print('✅ Deployment complete')
 "
