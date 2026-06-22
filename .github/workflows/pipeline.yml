@@ -1,4 +1,4 @@
-name: Tourism-Package-Prediction
+name: Tourism-Pipeline
 
 on:
   push:
@@ -6,16 +6,13 @@ on:
       - main
 
 jobs:
+
   register-dataset:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: pip install -r tourism_project/requirements.txt
-
-      - name: Upload dataset
-        env:
+      - run: pip install -r tourism_project/requirements.txt
+      - env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python tourism_project/model_building/data_register.py
 
@@ -24,12 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: pip install -r tourism_project/requirements.txt
-
-      - name: Run data prep
-        env:
+      - run: pip install -r tourism_project/requirements.txt
+      - env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python tourism_project/model_building/prep.py
 
@@ -38,49 +31,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: pip install -r tourism_project/requirements.txt
-
-      - name: Train model
-        env:
+      - run: pip install -r tourism_project/requirements.txt
+      - env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           FAST_CI: "true"
-          MLFLOW_TRACKING_URI: file://${{ github.workspace }}/mlruns
-          MLFLOW_EXPERIMENT_NAME: tourism-package-prediction-experiment-ci
         run: python tourism_project/model_building/train.py
 
   deploy-space:
     needs: model-training
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Hugging Face client
-        run: pip install huggingface_hub
+      - run: pip install huggingface_hub
 
-      - name: Prepare Space files
-        run: |
-          mkdir -p deploy_space
-          cp tourism_project/deployment/app.py deploy_space/app.py
-          cp tourism_project/deployment/requirements.txt deploy_space/requirements.txt
+      - run: mkdir deploy_space
+      - run: cp tourism_project/deployment/app.py deploy_space/
+      - run: cp tourism_project/deployment/requirements.txt deploy_space/
+      - run: cp tourism_project/deployment/Dockerfile deploy_space/
 
-          printf '%s\n' \
-            '---' \
-            'title: Tourism Package Prediction' \
-            'emoji: 🌍' \
-            'colorFrom: blue' \
-            'colorTo: green' \
-            'sdk: docker' \
-            'sdk_version: "0.0.1"' \
-            'app_file: app.py' \
-            'pinned: false' \
-            '---' > deploy_space/README.md
+      - run: echo "---" > deploy_space/README.md
+      - run: echo "title: Tourism Package Prediction" >> deploy_space/README.md
+      - run: echo "emoji: 🌍" >> deploy_space/README.md
+      - run: echo "colorFrom: blue" >> deploy_space/README.md
+      - run: echo "colorTo: green" >> deploy_space/README.md
+      - run: echo "sdk: docker" >> deploy_space/README.md
+      - run: echo "sdk_version: \"0.0.1\"" >> deploy_space/README.md
+      - run: echo "app_file: app.py" >> deploy_space/README.md
+      - run: echo "pinned: false" >> deploy_space/README.md
+      - run: echo "---" >> deploy_space/README.md
 
-          cp tourism_project/deployment/Dockerfile deploy_space/Dockerfile
-
-      - name: Deploy Space
-        env:
+      - env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           python -c "
@@ -96,11 +78,7 @@ try:
 except RepositoryNotFoundError:
     create_repo(repo_id=repo_id, repo_type='space', space_sdk='docker')
 
-api.upload_folder(
-    folder_path='deploy_space',
-    repo_id=repo_id,
-    repo_type='space'
-)
+api.upload_folder(folder_path='deploy_space', repo_id=repo_id, repo_type='space')
 
-print('Deployment complete')
+print('✅ Deployment complete')
 "
