@@ -1,28 +1,57 @@
-
-name: pipeline
+name: Tourism-Package-Prediction MLOps Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main  # Automatically triggers on push to the main branch
 
 jobs:
 
-  build:
+  register-dataset:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: pip install -r tourism_project/requirements.txt
-
-      - run: python tourism_project/model_building/data_register.py
+      - uses: actions/checkout@v3
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+      - name: Upload Dataset to Hugging Face Hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python tourism_project/model_building/data_register.py
 
-      - run: python tourism_project/model_building/prep.py
+  data-prep:
+    needs: register-dataset
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+      - name: Run Data Preparation
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python tourism_project/model_building/prep.py
 
-      - run: python tourism_project/model_building/train.py
+
+  model-traning:
+    needs: data-prep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+      - name: Model Building
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python tourism_project/model_building/train.py
 
-      - run: echo DONE
+
+  deploy-hosting:
+    runs-on: ubuntu-latest
+    needs: [model-traning,data-prep,register-dataset]
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+      - name: Push files to Frontend Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python tourism_project/hosting/hosting.py
