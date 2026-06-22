@@ -1,3 +1,5 @@
+
+
 # tourism_project/model_building/train.py
 
 import os
@@ -57,24 +59,23 @@ else:
 # CI-safe MLflow setup
 # ============================================================
 MLRUNS_DIR = Path("mlruns").resolve()
-MLARTIFACTS_DIR = Path("mlartifacts").resolve()
-
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", f"file://{MLRUNS_DIR}")
 EXPERIMENT_NAME = os.getenv(
     "MLFLOW_EXPERIMENT_NAME",
     "tourism-package-prediction-experiment-ci"
 )
 
-MLRUNS_DIR.mkdir(parents=True, exist_ok=True)
-MLARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
+# Create experiment explicitly with local artifact location
+# to avoid conflicts with old mlflow-artifacts based experiments.
 existing_exp = mlflow.get_experiment_by_name(EXPERIMENT_NAME)
 if existing_exp is None:
+    artifact_dir = (MLRUNS_DIR / "artifacts").resolve()
+    artifact_dir.mkdir(parents=True, exist_ok=True)
     mlflow.create_experiment(
         EXPERIMENT_NAME,
-        artifact_location=f"file://{MLARTIFACTS_DIR}"
+        artifact_location=f"file://{artifact_dir}"
     )
 
 mlflow.set_experiment(EXPERIMENT_NAME)
@@ -189,7 +190,7 @@ xgb_model = xgb.XGBClassifier(
     scale_pos_weight=class_weight,
     random_state=RANDOM_STATE,
     n_jobs=-1,
-    tree_method="hist",
+    tree_method="hist",  # faster CPU training
 )
 
 model_pipeline = Pipeline(
@@ -200,7 +201,7 @@ model_pipeline = Pipeline(
 )
 
 # ============================================================
-# Search space
+# Search space (optimized for CI runtime)
 # ============================================================
 param_distributions = {
     "xgbclassifier__n_estimators": N_ESTIMATORS_OPTIONS,
@@ -239,10 +240,12 @@ with mlflow.start_run(run_name="xgboost_fast_ci_search"):
     mlflow.log_params(search.best_params_)
     mlflow.log_metric("best_cv_f1", float(search.best_score_))
 
+    # Save full search results once
     cv_results = pd.DataFrame(search.cv_results_)
     cv_results.to_csv("cv_results.csv", index=False)
     mlflow.log_artifact("cv_results.csv")
 
+    # Predictions
     y_pred_train_proba = best_model.predict_proba(Xtrain)[:, 1]
     y_pred_test_proba = best_model.predict_proba(Xtest)[:, 1]
 
@@ -273,6 +276,7 @@ with mlflow.start_run(run_name="xgboost_fast_ci_search"):
     mlflow.log_artifact("train_classification_report.json")
     mlflow.log_artifact("test_classification_report.json")
 
+    # Save model locally and log as artifact
     joblib.dump(best_model, MODEL_FILE_NAME)
     mlflow.log_artifact(MODEL_FILE_NAME, artifact_path="model")
 
