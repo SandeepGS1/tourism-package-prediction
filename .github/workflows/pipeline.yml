@@ -49,9 +49,14 @@ jobs:
       - run: cp tourism_project/deployment/app.py deploy_space/
       - run: cp tourism_project/deployment/requirements.txt deploy_space/
       - run: cp tourism_project/deployment/Dockerfile deploy_space/
-      - run: python -c "from huggingface_hub import HfApi,create_repo;import os;api=HfApi(token=os.getenv('HF_TOKEN'));repo='SandeepGS/tourism_package-prediction';import huggingface_hub.utils as u; 
-try: api.repo_info(repo_id=repo,repo_type='space')
-except u.RepositoryNotFoundError: create_repo(repo_id=repo,repo_type='space',space_sdk='docker');
+      
+      - run: python -c "from huggingface_hub import HfApi,create_repo,utils;import os;api=HfApi(token=os.getenv('HF_TOKEN'));repo='SandeepGS/tourism_package-prediction'; 
+import sys; 
+try: api.repo_info(repo_id=repo,repo_type='space'); 
+except utils.RepositoryNotFoundError: create_repo(repo_id=repo,repo_type='space',space_sdk='docker'); 
+
 api.upload_folder(folder_path='deploy_space',repo_id=repo,repo_type='space'); print('Done')"
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+  env:
+    HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
