@@ -1,4 +1,4 @@
-name: Tourism-Package-Prediction MLOps Pipeline
+name: Tourism-Package-Prediction
 
 on:
   push:
@@ -10,10 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install -r tourism_project/requirements.txt
+      - name: Install deps
+        run: pip install -r tourism_project/requirements.txt
       - name: Upload dataset
         env:
-          HF_TOKEN: \${{ secrets.HF_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python tourism_project/model_building/data_register.py
 
   data-prep:
@@ -21,10 +22,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install -r tourism_project/requirements.txt
-      - name: Run data prep
+      - name: Install deps
+        run: pip install -r tourism_project/requirements.txt
+      - name: Run prep
         env:
-          HF_TOKEN: \${{ secrets.HF_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python tourism_project/model_building/prep.py
 
   model-training:
@@ -32,10 +34,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install -r tourism_project/requirements.txt
+      - name: Install deps
+        run: pip install -r tourism_project/requirements.txt
       - name: Train model
         env:
-          HF_TOKEN: \${{ secrets.HF_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           FAST_CI: "true"
         run: python tourism_project/model_building/train.py
 
@@ -44,15 +47,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install huggingface_hub
-      - name: Deploy to HuggingFace Space
+      - name: Install HF client
+        run: pip install huggingface_hub
+      - name: Deploy Space
         env:
-          HF_TOKEN: \${{ secrets.HF_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           python - <<EOF
 from huggingface_hub import HfApi, create_repo
 from huggingface_hub.utils import RepositoryNotFoundError
-import os
+import os, shutil
 
 repo_id = "SandeepGS/tourism_package-prediction"
 api = HfApi(token=os.getenv("HF_TOKEN"))
@@ -62,8 +66,6 @@ try:
 except RepositoryNotFoundError:
     create_repo(repo_id=repo_id, repo_type="space", space_sdk="docker")
 
-# prepare minimal folder
-import shutil, os
 os.makedirs("deploy_space", exist_ok=True)
 shutil.copy("tourism_project/deployment/app.py", "deploy_space/app.py")
 shutil.copy("tourism_project/deployment/requirements.txt", "deploy_space/requirements.txt")
