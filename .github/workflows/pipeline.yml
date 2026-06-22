@@ -1,1 +1,69 @@
-.github/workflows/pipeline.yml
+name: Tourism-Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+
+  dataset:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -r tourism_project/requirements.txt
+      - run: python tourism_project/model_building/data_register.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+  prep:
+    needs: dataset
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -r tourism_project/requirements.txt
+      - run: python tourism_project/model_building/prep.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+  train:
+    needs: prep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -r tourism_project/requirements.txt
+      - run: python tourism_project/model_building/train.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          FAST_CI: "true"
+
+  deploy:
+    needs: train
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install huggingface_hub
+
+      - run: mkdir deploy_space
+      - run: cp tourism_project/deployment/app.py deploy_space/
+      - run: cp tourism_project/deployment/requirements.txt deploy_space/
+      - run: cp tourism_project/deployment/Dockerfile deploy_space/
+
+      - run: echo --- > deploy_space/README.md
+      - run: echo title: Tourism_Package >> deploy_space/README.md
+      - run: echo emoji: globe >> deploy_space/README.md
+      - run: echo colorFrom: blue >> deploy_space/README.md
+      - run: echo colorTo: green >> deploy_space/README.md
+      - run: echo sdk: docker >> deploy_space/README.md
+      - run: echo sdk_version: 0.0.1 >> deploy_space/README.md
+      - run: echo app_file: app.py >> deploy_space/README.md
+      - run: echo pinned: false >> deploy_space/README.md
+      - run: echo --- >> deploy_space/README.md
+
+      - run: python -c "from huggingface_hub import HfApi,create_repo;import os;api=HfApi(token=os.getenv('HF_TOKEN'));repo='SandeepGS/tourism_package-prediction';import huggingface_hub.utils as u; 
+try: api.repo_info(repo_id=repo,repo_type='space')
+except u.RepositoryNotFoundError: create_repo(repo_id=repo,repo_type='space',space_sdk='docker');
+api.upload_folder(folder_path='deploy_space',repo_id=repo,repo_type='space'); print('Done')"
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
