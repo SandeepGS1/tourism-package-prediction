@@ -12,7 +12,7 @@ from huggingface_hub.utils import RepositoryNotFoundError
 # ==========================================
 # Configuration
 # ==========================================
-DATASET_REPO_ID = "SandeepGS/tourism-package-prediction"
+DATASET_REPO_ID = "SandeepGS/tourism_package-prediction"
 DATA_FILE_NAME = "tourism.csv"
 
 HF_TOKEN = os.getenv("HF_TOKEN")

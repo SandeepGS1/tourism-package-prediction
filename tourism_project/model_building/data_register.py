@@ -9,7 +9,7 @@ from huggingface_hub.utils import RepositoryNotFoundError
 # ==========================================
 # Configuration
 # ==========================================
-REPO_ID = "SandeepGS/tourism-package-prediction"
+REPO_ID = "SandeepGS/tourism_package-prediction"
 REPO_TYPE = "dataset"
 DATA_FOLDER = "tourism_project/data"   # ✅ FIX: correct relative path
 
