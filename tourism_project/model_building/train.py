@@ -1,10 +1,12 @@
 
 
+
 # tourism_project/model_building/train.py
 
 import os
 import json
 import warnings
+import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -43,7 +45,6 @@ MODEL_CARD_FILE = "README.md"
 CLASSIFICATION_THRESHOLD = 0.45
 RANDOM_STATE = 42
 
-# Runtime optimization settings
 FAST_CI = os.getenv("FAST_CI", "true").lower() == "true"
 
 if FAST_CI:
@@ -65,18 +66,17 @@ EXPERIMENT_NAME = os.getenv(
     "tourism-package-prediction-experiment-ci"
 )
 
+# Defensive cleanup for broken leftover folder
+bad_artifacts_dir = MLRUNS_DIR / "artifacts"
+if bad_artifacts_dir.exists() and bad_artifacts_dir.is_dir():
+    shutil.rmtree(bad_artifacts_dir, ignore_errors=True)
+
+MLRUNS_DIR.mkdir(parents=True, exist_ok=True)
+
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
-# Create experiment explicitly with local artifact location
-# to avoid conflicts with old mlflow-artifacts based experiments.
-existing_exp = mlflow.get_experiment_by_name(EXPERIMENT_NAME)
-if existing_exp is None:
-    artifact_dir = (MLRUNS_DIR / "artifacts").resolve()
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    mlflow.create_experiment(
-        EXPERIMENT_NAME,
-        artifact_location=f"file://{artifact_dir}"
-    )
+if mlflow.get_experiment_by_name(EXPERIMENT_NAME) is None:
+    mlflow.create_experiment(EXPERIMENT_NAME)
 
 mlflow.set_experiment(EXPERIMENT_NAME)
 
@@ -90,7 +90,7 @@ if not HF_TOKEN:
 api = HfApi(token=HF_TOKEN)
 
 # ============================================================
-# Load prepared datasets from Hugging Face dataset repo
+# Load prepared datasets
 # ============================================================
 Xtrain_path = f"hf://datasets/{DATASET_REPO_ID}/Xtrain.csv"
 Xtest_path = f"hf://datasets/{DATASET_REPO_ID}/Xtest.csv"
@@ -99,8 +99,6 @@ ytest_path = f"hf://datasets/{DATASET_REPO_ID}/ytest.csv"
 
 Xtrain = pd.read_csv(Xtrain_path)
 Xtest = pd.read_csv(Xtest_path)
-
-# squeeze single-column DataFrame -> Series
 ytrain = pd.read_csv(ytrain_path).squeeze("columns")
 ytest = pd.read_csv(ytest_path).squeeze("columns")
 
@@ -117,9 +115,7 @@ nominal_features = [
     "ProductPitched",
     "MaritalStatus",
 ]
-
 ordinal_features = ["Designation"]
-
 numeric_features = [
     "Age",
     "CityTier",
@@ -190,7 +186,7 @@ xgb_model = xgb.XGBClassifier(
     scale_pos_weight=class_weight,
     random_state=RANDOM_STATE,
     n_jobs=-1,
-    tree_method="hist",  # faster CPU training
+    tree_method="hist",
 )
 
 model_pipeline = Pipeline(
@@ -200,9 +196,6 @@ model_pipeline = Pipeline(
     ]
 )
 
-# ============================================================
-# Search space (optimized for CI runtime)
-# ============================================================
 param_distributions = {
     "xgbclassifier__n_estimators": N_ESTIMATORS_OPTIONS,
     "xgbclassifier__max_depth": [3, 4],
@@ -240,12 +233,10 @@ with mlflow.start_run(run_name="xgboost_fast_ci_search"):
     mlflow.log_params(search.best_params_)
     mlflow.log_metric("best_cv_f1", float(search.best_score_))
 
-    # Save full search results once
     cv_results = pd.DataFrame(search.cv_results_)
     cv_results.to_csv("cv_results.csv", index=False)
     mlflow.log_artifact("cv_results.csv")
 
-    # Predictions
     y_pred_train_proba = best_model.predict_proba(Xtrain)[:, 1]
     y_pred_test_proba = best_model.predict_proba(Xtest)[:, 1]
 
@@ -276,7 +267,6 @@ with mlflow.start_run(run_name="xgboost_fast_ci_search"):
     mlflow.log_artifact("train_classification_report.json")
     mlflow.log_artifact("test_classification_report.json")
 
-    # Save model locally and log as artifact
     joblib.dump(best_model, MODEL_FILE_NAME)
     mlflow.log_artifact(MODEL_FILE_NAME, artifact_path="model")
 
