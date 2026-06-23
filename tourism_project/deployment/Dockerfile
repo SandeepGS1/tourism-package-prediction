@@ -2,10 +2,9 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-COPY tourism_project/deployment/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
 
-COPY tourism_project/deployment .
+RUN pip install --no-cache-dir -r requirements.txt
 
 RUN useradd -m -u 1000 user && chown -R user:user /app
 USER user
