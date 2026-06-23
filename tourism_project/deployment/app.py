@@ -37,7 +37,7 @@ def load_model():
         model_path = hf_hub_download(
             repo_id="SandeepGS/tourism_package-prediction",
             filename="tourism_conversion_predict_model.joblib",
-            repo_type-"model"
+            repo_type="model"
         )
 
         print("✅ Model downloaded:", model_path)
