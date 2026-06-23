@@ -7,6 +7,13 @@ import joblib
 import traceback
 from huggingface_hub import hf_hub_download
 
+
+import os
+
+print("✅ App starting...")
+print("Working dir:", os.getcwd())
+print("Files:", os.listdir())
+
 # ============================================================
 # Page Config
 # ============================================================
@@ -25,28 +32,27 @@ st.markdown("Predict whether a customer will purchase a tourism package.")
 @st.cache_resource
 def load_model():
     try:
-        st.info("🔄 Loading model from Hugging Face...")
+        print("🔄 Downloading model...")
 
         model_path = hf_hub_download(
             repo_id="SandeepGS/tourism_package-prediction",
             filename="tourism_conversion_predict_model.joblib"
         )
 
+        print("✅ Model downloaded:", model_path)
+
         model = joblib.load(model_path)
 
-        st.success("✅ Model loaded successfully")
+        print("✅ Model loaded successfully")
         return model
 
-    except Exception:
-        st.error("❌ Failed to load model")
-        st.text(traceback.format_exc())
-        return None
-
-
-model = load_model()
+    except Exception as e:
+        print("❌ MODEL LOAD ERROR:", str(e))
+        raise e
 
 # Stop app if model fails
 if model is None:
+    st.error("Model not available. App cannot proceed.")
     st.stop()
 
 # ============================================================
@@ -152,3 +158,5 @@ if st.button("🚀 Predict"):
     except Exception:
         st.error("❌ Prediction failed")
         st.text(traceback.format_exc())
+
+st.write("✅ App running... waiting for input")
