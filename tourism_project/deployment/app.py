@@ -51,12 +51,21 @@ def load_model():
         print("❌ MODEL LOAD ERROR:", str(e))
         raise e
 
-model = load_model()
+try:
+    model = load_model()
+    print("✅ App fully initialized")
 
-# Stop app if model fails
-if model is None:
-    st.error("Model not available. App cannot proceed.")
+except Exception as e:
+    st.error("❌ Model failed to load")
+    st.text(str(e))
+    print("❌ MODEL LOAD FAILED:", str(e))
+
+    st.warning("App is running without model. Please check logs.")
+    
+    # ✅ DO NOT block — just safely exit render cycle
     st.stop()
+
+
 
 # ============================================================
 # Helper Function → Input DataFrame
