@@ -36,7 +36,8 @@ def load_model():
 
         model_path = hf_hub_download(
             repo_id="SandeepGS/tourism_package-prediction",
-            filename="tourism_conversion_predict_model.joblib"
+            filename="tourism_conversion_predict_model.joblib",
+            repo_type-"model"
         )
 
         print("✅ Model downloaded:", model_path)
@@ -49,6 +50,8 @@ def load_model():
     except Exception as e:
         print("❌ MODEL LOAD ERROR:", str(e))
         raise e
+
+model = load_model()
 
 # Stop app if model fails
 if model is None:
