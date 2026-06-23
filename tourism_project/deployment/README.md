@@ -7,6 +7,7 @@ sdk: docker
 sdk_version: "0.0.1"
 python_version: "3.10"
 app_file: app.py
+app_port: 8501
 pinned: false
 ---
 
